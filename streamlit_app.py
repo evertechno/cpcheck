@@ -1,10 +1,13 @@
 import streamlit as st
 import google.generativeai as genai
 import PyPDF2
-import re
+import openai
+import numpy as np
+from sklearn.metrics.pairwise import cosine_similarity
 
-# Configure the API key securely from Streamlit's secrets
+# Configure the API keys securely from Streamlit's secrets
 genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
+openai.api_key = st.secrets["OPENAI_API_KEY"]  # Add your OpenAI key here for embeddings
 
 # PDF Loading function
 def extract_text_from_pdf(file_path):
@@ -23,13 +26,50 @@ def extract_text_from_pdf(file_path):
         st.error(f"Error processing PDF: {e}")
         return None
 
-# Function to search for relevant content based on a query
-def search_relevant_text(pdf_text, query):
-    # Search for sections of the document that contain relevant text
-    # Simple approach: search for the query word/phrase in the document
-    pattern = re.compile(r"([^.]*?{}[^.]*\.)".format(re.escape(query)), re.IGNORECASE)
-    matches = pattern.findall(pdf_text)
-    return " ".join(matches)
+# Function to split the document into chunks based on paragraphs or headings
+def split_text_into_chunks(text, chunk_size=1000):
+    # Split the document by paragraphs or other logical delimiters
+    paragraphs = text.split("\n")
+    chunks = []
+    current_chunk = ""
+    
+    for para in paragraphs:
+        if len(current_chunk) + len(para) > chunk_size:
+            chunks.append(current_chunk)
+            current_chunk = para
+        else:
+            current_chunk += "\n" + para
+    
+    if current_chunk:
+        chunks.append(current_chunk)
+    return chunks
+
+# Function to get text embeddings
+def get_text_embeddings(text_list):
+    try:
+        # Get embeddings from OpenAI's text-embedding model
+        embeddings = openai.Embedding.create(input=text_list, model="text-embedding-ada-002")
+        return [embedding['embedding'] for embedding in embeddings['data']]
+    except Exception as e:
+        st.error(f"Error retrieving embeddings: {e}")
+        return []
+
+# Function to search for the most relevant text chunk
+def find_most_relevant_chunk(query, chunks):
+    # Get the embedding of the user's query
+    query_embedding = openai.Embedding.create(input=[query], model="text-embedding-ada-002")['data'][0]['embedding']
+    
+    # Get embeddings of the document chunks
+    chunk_embeddings = get_text_embeddings(chunks)
+    
+    # Calculate cosine similarity between query and document chunks
+    similarities = cosine_similarity([query_embedding], chunk_embeddings)
+    
+    # Get the index of the most relevant chunk
+    best_chunk_idx = np.argmax(similarities)
+    
+    # Return the most relevant chunk of text
+    return chunks[best_chunk_idx]
 
 # Streamlit App UI
 st.title("Compliance Document Chatbot (Gemini 1.5 Flash)")
@@ -41,6 +81,9 @@ pdf_content = extract_text_from_pdf(PDF_FILE_PATH)
 if pdf_content is None:
     st.stop()  # Stop execution if PDF loading failed
 
+# Split the content into smaller chunks for semantic search
+chunks = split_text_into_chunks(pdf_content)
+
 # Prompt input field
 prompt = st.text_input("Ask a question about the compliance document:", "")
 
@@ -48,17 +91,17 @@ prompt = st.text_input("Ask a question about the compliance document:", "")
 if st.button("Generate Response"):
     if prompt:
         try:
-            # Search for relevant content based on the prompt
-            relevant_content = search_relevant_text(pdf_content, prompt)
+            # Find the most relevant chunk based on the user's query
+            relevant_chunk = find_most_relevant_chunk(prompt, chunks)
             
-            if not relevant_content:
+            if not relevant_chunk:
                 st.write("No relevant content found for your question.")
             else:
                 # Load and configure the model
                 model = genai.GenerativeModel('gemini-1.5-flash')
 
                 # Create a combined prompt with the relevant content and user question
-                combined_prompt = f"Here is the relevant content from the compliance document:\n\n{relevant_content}\n\nUser Question: {prompt}\n\nAnswer the user's question based on the relevant content."
+                combined_prompt = f"Here is the most relevant content from the compliance document:\n\n{relevant_chunk}\n\nUser Question: {prompt}\n\nAnswer the user's question based on the relevant content."
 
                 # Generate response from the model
                 response = model.generate_content(combined_prompt)
