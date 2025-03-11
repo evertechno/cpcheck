@@ -1,13 +1,15 @@
 import streamlit as st
 import google.generativeai as genai
 import PyPDF2
-import openai
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
+from sentence_transformers import SentenceTransformer
 
-# Configure the API keys securely from Streamlit's secrets
+# Configure the API key securely from Streamlit's secrets
 genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
-openai.api_key = st.secrets["OPENAI_API_KEY"]  # Add your OpenAI key here for embeddings
+
+# Initialize SentenceTransformer model for embeddings
+model = SentenceTransformer('all-MiniLM-L6-v2')  # A lightweight transformer model
 
 # PDF Loading function
 def extract_text_from_pdf(file_path):
@@ -46,18 +48,12 @@ def split_text_into_chunks(text, chunk_size=1000):
 
 # Function to get text embeddings
 def get_text_embeddings(text_list):
-    try:
-        # Get embeddings from OpenAI's text-embedding model
-        embeddings = openai.Embedding.create(input=text_list, model="text-embedding-ada-002")
-        return [embedding['embedding'] for embedding in embeddings['data']]
-    except Exception as e:
-        st.error(f"Error retrieving embeddings: {e}")
-        return []
+    return model.encode(text_list)
 
 # Function to search for the most relevant text chunk
 def find_most_relevant_chunk(query, chunks):
     # Get the embedding of the user's query
-    query_embedding = openai.Embedding.create(input=[query], model="text-embedding-ada-002")['data'][0]['embedding']
+    query_embedding = model.encode([query])[0]
     
     # Get embeddings of the document chunks
     chunk_embeddings = get_text_embeddings(chunks)
