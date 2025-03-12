@@ -5,6 +5,9 @@ from bs4 import BeautifulSoup
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
+import email
+from email import policy
+from email.parser import BytesParser
 
 # Configure the API key securely from Streamlit's secrets
 genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
@@ -35,6 +38,17 @@ def parse_html_content(html_content):
         return text
     except Exception as e:
         st.error(f"Error parsing HTML: {e}")
+        return None
+
+# Email Parsing function
+def parse_email_content(email_file):
+    try:
+        msg = BytesParser(policy=policy.default).parse(email_file)
+        # Extract plain text content of the email
+        email_text = msg.get_body(preferencelist=('plain')).get_payload()
+        return email_text
+    except Exception as e:
+        st.error(f"Error parsing email: {e}")
         return None
 
 # Function to split the document into chunks based on paragraphs or headings
@@ -93,16 +107,27 @@ if pdf_content is None:
 # Split the content into smaller chunks for semantic search
 chunks = split_text_into_chunks(pdf_content)
 
-# Upload HTML Content (Email or Creative)
-html_file = st.file_uploader("Upload HTML Email/Creative", type="html")
-if html_file is not None:
-    html_content = html_file.read().decode("utf-8")
-    parsed_html = parse_html_content(html_content)
-    
-    if parsed_html is None:
-        st.stop()  # Stop execution if HTML parsing failed
-    
-    # Check compliance for the uploaded HTML content
+# Upload HTML or Email Content
+file_type = st.radio("Choose the file type", ('HTML Email', 'Text Email (.eml)'))
+
+if file_type == 'HTML Email':
+    html_file = st.file_uploader("Upload HTML Email/Creative", type="html")
+    if html_file is not None:
+        html_content = html_file.read().decode("utf-8")
+        parsed_html = parse_html_content(html_content)
+        
+        if parsed_html is None:
+            st.stop()  # Stop execution if HTML parsing failed
+else:
+    email_file = st.file_uploader("Upload Email (.eml)", type="eml")
+    if email_file is not None:
+        parsed_html = parse_email_content(email_file)
+        
+        if parsed_html is None:
+            st.stop()  # Stop execution if email parsing failed
+
+# Check compliance for the uploaded content
+if parsed_html:
     relevant_chunk = find_most_relevant_chunk(parsed_html, chunks)
     
     if relevant_chunk:
