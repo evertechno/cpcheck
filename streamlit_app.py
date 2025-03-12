@@ -57,19 +57,25 @@ def split_text_into_chunks(text, chunk_size=1000):
 # Function to get text embeddings using TF-IDF
 def get_text_embeddings(text_list):
     vectorizer = TfidfVectorizer()
-    embeddings = vectorizer.fit_transform(text_list)
-    return embeddings
+    embeddings = vectorizer.fit_transform(text_list)  # Fit on the combined text list (query + chunks)
+    return embeddings, vectorizer
 
 # Function to search for the most relevant text chunk
 def find_most_relevant_chunk(query, chunks):
-    chunk_embeddings = get_text_embeddings(chunks)
-    query_embeddings = get_text_embeddings([query])
-
-    # Reshape the query embeddings to match the dimensions of the chunk embeddings
-    query_embeddings = query_embeddings.reshape(1, -1)  # Ensure it's a 2D array (1, n_features)
+    # Combine the query and document chunks for consistent vectorization
+    text_list = [query] + chunks
+    embeddings, vectorizer = get_text_embeddings(text_list)
     
-    similarities = cosine_similarity(query_embeddings, chunk_embeddings)
+    # Extract the query's embedding (first row of embeddings)
+    query_embedding = embeddings[0:1]  # First row corresponds to the query
     
+    # The rest of the embeddings are for the document chunks
+    chunk_embeddings = embeddings[1:]  # All except the first row
+    
+    # Calculate cosine similarity between query and document chunks
+    similarities = cosine_similarity(query_embedding, chunk_embeddings)
+    
+    # Get the index of the most relevant chunk
     best_chunk_idx = np.argmax(similarities)
     
     return chunks[best_chunk_idx]
