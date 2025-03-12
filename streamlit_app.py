@@ -124,6 +124,18 @@ def generate_pdf_report(content, insights, compliance_score):
     pdf.output(file_path)
     return file_path
 
+# Function to generate downloadable Text report
+def generate_text_report(content, insights, compliance_score):
+    report = f"Compliance Check Report\n\n"
+    report += f"Compliance Insights:\n{insights}\n\n"
+    report += f"Compliance Score: {compliance_score}%\n\n"
+    report += f"Original Content:\n{content}\n"
+    
+    file_path = "compliance_report.txt"
+    with open(file_path, "w") as f:
+        f.write(report)
+    return file_path
+
 # Streamlit App UI
 st.title("Mutual Fund Marketing Campaign Compliance Checker")
 
@@ -181,10 +193,18 @@ if parsed_html:
             
             # Offer downloadable PDF report
             st.download_button(
-                label="Download Compliance Report",
+                label="Download Compliance Report (PDF)",
                 data=generate_pdf_report(parsed_html, response.text, compliance_score),
                 file_name="compliance_report.pdf",
                 mime="application/pdf"
+            )
+            
+            # Offer downloadable Text report
+            st.download_button(
+                label="Download Compliance Report (Text)",
+                data=generate_text_report(parsed_html, response.text, compliance_score),
+                file_name="compliance_report.txt",
+                mime="text/plain"
             )
 
         except Exception as e:
