@@ -1,263 +1,219 @@
 import streamlit as st
 import google.generativeai as genai
-import PyPDF2
-from bs4 import BeautifulSoup
-import numpy as np
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
-import email
-from email import policy
-from email.parser import BytesParser
+import pandas as pd
+import requests
+import asyncio
+import PyPDF2  # Library to extract text from PDF
+from io import BytesIO
+from googletrans import Translator
 from fpdf import FPDF
 import os
 
 # Configure the API key securely from Streamlit's secrets
 genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
 
-# PDF Loading function
-def extract_text_from_pdf(file_path):
-    try:
-        with open(file_path, "rb") as file:
-            reader = PyPDF2.PdfReader(file)
-            text = ""
-            for page_num in range(len(reader.pages)):
-                page = reader.pages[page_num]
-                text += page.extract_text() or ""
-        return text
-    except FileNotFoundError:
-        st.error(f"PDF file not found.")
-        return None
-    except Exception as e:
-        st.error(f"Error processing PDF: {e}")
-        return None
+# AMFI PDF URL
+AMFI_PDF_URL = "https://raw.githubusercontent.com/sobarine21/mailgunner/c4d88013cf2a4fd4092001e283398c6cd629c8d7/AMFI.pdf"
 
-# HTML Parsing function
-def parse_html_content(html_content):
+# Helper Functions
+def extract_amfi_guidelines_from_github(pdf_url):
+    """Extract AMFI guidelines from a PDF hosted on GitHub."""
     try:
-        soup = BeautifulSoup(html_content, "html.parser")
-        # Extract text from the HTML content
-        text = soup.get_text(separator="\n", strip=True)
+        response = requests.get(pdf_url)
+        response.raise_for_status()
+        pdf_file = BytesIO(response.content)
+        pdf_reader = PyPDF2.PdfReader(pdf_file)
+        text = ""
+        for page_num in range(len(pdf_reader.pages)):
+            page = pdf_reader.pages[page_num]
+            text += page.extract_text()
         return text
     except Exception as e:
-        st.error(f"Error parsing HTML: {e}")
-        return None
+        st.error(f"Error extracting text from PDF: {e}")
+        return ""
 
-# Email Parsing function
-def parse_email_content(email_file):
-    try:
-        msg = BytesParser(policy=policy.default).parse(email_file)
-        # Extract plain text content of the email
-        email_text = msg.get_body(preferencelist=('plain')).get_payload()
-        return email_text
-    except Exception as e:
-        st.error(f"Error parsing email: {e}")
-        return None
+def check_compliance(test_email, amfi_guidelines):
+    """Check if the email complies with the AMFI advertisement code of conduct."""
+    violations = []
+    if "mutual fund" not in test_email.lower():
+        violations.append("The email must mention 'mutual fund'.")
+    if "disclaimer" not in test_email.lower():
+        violations.append("The email should include a disclaimer regarding mutual fund investments.")
+    if not any(keyword in test_email.lower() for keyword in ["risk", "past performance", "no guarantee"]):
+        violations.append("The email should mention risk and past performance disclaimers.")
+    
+    if violations:
+        return False, violations
+    return True, ["The email complies with the code of conduct."]
 
-# Function to split the document into chunks based on paragraphs or headings
-def split_text_into_chunks(text, chunk_size=1000):
-    paragraphs = text.split("\n")
-    chunks = []
-    current_chunk = ""
-    
-    for para in paragraphs:
-        if len(current_chunk) + len(para) > chunk_size:
-            chunks.append(current_chunk)
-            current_chunk = para
-        else:
-            current_chunk += "\n" + para
-    
-    if current_chunk:
-        chunks.append(current_chunk)
-    return chunks
-
-# Function to get text embeddings using TF-IDF
-def get_text_embeddings(text_list):
-    vectorizer = TfidfVectorizer()
-    embeddings = vectorizer.fit_transform(text_list)  # Fit on the combined text list (query + chunks)
-    return embeddings, vectorizer
-
-# Function to search for the most relevant text chunk
-def find_most_relevant_chunk(query, chunks):
-    # Combine the query and document chunks for consistent vectorization
-    text_list = [query] + chunks
-    embeddings, vectorizer = get_text_embeddings(text_list)
-    
-    # Extract the query's embedding (first row of embeddings)
-    query_embedding = embeddings[0:1]  # First row corresponds to the query
-    
-    # The rest of the embeddings are for the document chunks
-    chunk_embeddings = embeddings[1:]  # All except the first row
-    
-    # Calculate cosine similarity between query and document chunks
-    similarities = cosine_similarity(query_embedding, chunk_embeddings)
-    
-    # Get the index of the most relevant chunk
-    best_chunk_idx = np.argmax(similarities)
-    
-    return chunks[best_chunk_idx]
-
-# Function to generate downloadable PDF report
 def generate_pdf_report(content, insights, compliance_score):
+    """Generate a PDF report with the content, insights, and compliance score."""
     pdf = FPDF()
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
-    
-    # Title
+
     pdf.set_font("Arial", 'B', 16)
     pdf.cell(200, 10, "Compliance Check Report", ln=True, align='C')
-    
-    # Compliance Insights
+
     pdf.ln(10)
     pdf.set_font("Arial", size=12)
     pdf.multi_cell(0, 10, f"Compliance Check Insights:\n\n{insights}")
-    
-    # Compliance Score
+
     pdf.ln(10)
     pdf.cell(200, 10, f"Compliance Score: {compliance_score}%")
-    
-    # Content Text
+
     pdf.ln(10)
     pdf.multi_cell(0, 10, "Original Content:\n\n" + content)
-    
-    # Save PDF
+
     file_path = "compliance_report.pdf"
     pdf.output(file_path)
     return file_path
 
-# Function to generate downloadable Text report
 def generate_text_report(content, insights, compliance_score):
+    """Generate a text file report with the content, insights, and compliance score."""
     report = f"Compliance Check Report\n\n"
     report += f"Compliance Insights:\n{insights}\n\n"
     report += f"Compliance Score: {compliance_score}%\n\n"
     report += f"Original Content:\n{content}\n"
-    
+
     file_path = "compliance_report.txt"
     with open(file_path, "w") as f:
         f.write(report)
     return file_path
 
-# Streamlit App UI
-st.title("Marketing Campaign Compliance & Email Checker")
+# Email Campaign Tool
+def send_email(email, subject, body, api_key):
+    """Function to send email using Mailgun API"""
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    data = {
+        "from": "Your Company <youremail@example.com>",
+        "to": email,
+        "subject": subject,
+        "text": body
+    }
+    response = requests.post("https://api.mailgun.net/v3/yourdomain.com/messages", headers=headers, data=data)
+    return response.status_code == 200
 
-# Path to the pre-existing Compliance PDF Document
-PDF_FILE_PATH = "compliance_document.pdf"  # Replace with the correct path to your compliance document
-pdf_content = extract_text_from_pdf(PDF_FILE_PATH)
+async def translate_text(text, target_language):
+    """Translate the email content to the target language."""
+    translator = Translator()
+    translated = translator.translate(text, dest=target_language)
+    return translated.text
 
-if pdf_content is None:
-    st.stop()  # Stop execution if PDF loading failed
+# Streamlit App
+st.title("Mutual Fund Compliance & Email Campaign Tool")
 
-# Split the content into smaller chunks for semantic search
-chunks = split_text_into_chunks(pdf_content)
+# Select function to use
+tool_choice = st.radio("Choose a tool:", ["Compliance Checker", "Email Campaign Tool"])
 
-# Choose function (Compliance Checking or Email Campaign Checking)
-app_mode = st.radio("Select Tool Mode", ("Compliance Checking", "Email Campaign Checking"))
+if tool_choice == "Compliance Checker":
+    st.header("Mutual Fund Marketing Campaign Compliance Checker")
+    
+    # Load AMFI Guidelines
+    amfi_guidelines = extract_amfi_guidelines_from_github(AMFI_PDF_URL)
+    
+    if amfi_guidelines:
+        st.text_area("AMFI Advertisement Code Guidelines", amfi_guidelines, height=300)
 
-# Compliance Checking Mode
-if app_mode == "Compliance Checking":
-    st.header("Compliance Checking Tool")
+    # Allow the user to upload or enter content for compliance checking
+    content_type = st.radio("Select content type:", ["Email", "HTML", "PDF"])
+    
+    if content_type == "Email":
+        test_email_message = st.text_area("Enter your test email message", height=300)
+        if st.button("Check Compliance"):
+            if test_email_message:
+                is_compliant, feedback = check_compliance(test_email_message, amfi_guidelines)
+                if is_compliant:
+                    st.success("The email complies with the AMFI Code of Conduct.")
+                else:
+                    st.warning("The email has the following issues:")
+                    for issue in feedback:
+                        st.warning(issue)
 
-    # Upload HTML or Email Content for compliance check
-    file_type = st.radio("Choose the file type", ('HTML Email', 'Text Email (.eml)'))
-
-    # Initialize parsed_html to None
-    parsed_html = None
-
-    if file_type == 'HTML Email':
-        html_file = st.file_uploader("Upload HTML Email/Creative", type="html")
+    elif content_type == "HTML":
+        html_file = st.file_uploader("Upload HTML Email", type="html")
         if html_file is not None:
             html_content = html_file.read().decode("utf-8")
-            parsed_html = parse_html_content(html_content)
-            
-            if parsed_html is None:
-                st.stop()  # Stop execution if HTML parsing failed
-    else:
-        email_file = st.file_uploader("Upload Email (.eml)", type="eml")
-        if email_file is not None:
-            parsed_html = parse_email_content(email_file)
-            
-            if parsed_html is None:
-                st.stop()  # Stop execution if email parsing failed
+            is_compliant, feedback = check_compliance(html_content, amfi_guidelines)
+            if is_compliant:
+                st.success("The HTML email complies with the AMFI Code of Conduct.")
+            else:
+                st.warning("The HTML email has the following issues:")
+                for issue in feedback:
+                    st.warning(issue)
 
-    # Check compliance for the uploaded content
-    if parsed_html:
-        relevant_chunk = find_most_relevant_chunk(parsed_html, chunks)
-        
-        if relevant_chunk:
-            # Load and configure the Generative AI Model
-            model = genai.GenerativeModel('gemini-1.5-flash')
-
-            # Create a combined prompt with the relevant content and HTML creative
-            combined_prompt = f"Here is the most relevant content from the compliance document:\n\n{relevant_chunk}\n\nUser's Marketing Campaign Content:\n\n{parsed_html}\n\nDoes this email/creative comply with the regulations? Provide insights and specify which clauses are being followed or violated, including suggestions for improvement."
-
+    elif content_type == "PDF":
+        pdf_file = st.file_uploader("Upload PDF File", type="pdf")
+        if pdf_file is not None:
             try:
-                # Generate response from the AI model
-                response = model.generate_content(combined_prompt)
-                st.write("Compliance Insights:")
-                st.write(response.text)
-                
-                # Assume a dummy compliance score for this example (could be calculated based on similarity)
-                compliance_score = np.random.randint(60, 100)  # Random score for example purposes
-                
-                # Offer downloadable PDF report
-                pdf_report_path = generate_pdf_report(parsed_html, response.text, compliance_score)
-                with open(pdf_report_path, "rb") as f:
-                    st.download_button(
-                        label="Download Compliance Report (PDF)",
-                        data=f,
-                        file_name="compliance_report.pdf",
-                        mime="application/pdf"
-                    )
-                
-                # Offer downloadable Text report
-                text_report_path = generate_text_report(parsed_html, response.text, compliance_score)
-                with open(text_report_path, "rb") as f:
-                    st.download_button(
-                        label="Download Compliance Report (Text)",
-                        data=f,
-                        file_name="compliance_report.txt",
-                        mime="text/plain"
-                    )
-
+                reader = PyPDF2.PdfReader(pdf_file)
+                pdf_text = ""
+                for page_num in range(len(reader.pages)):
+                    page = reader.pages[page_num]
+                    pdf_text += page.extract_text()
+                is_compliant, feedback = check_compliance(pdf_text, amfi_guidelines)
+                if is_compliant:
+                    st.success("The PDF complies with the AMFI Code of Conduct.")
+                else:
+                    st.warning("The PDF has the following issues:")
+                    for issue in feedback:
+                        st.warning(issue)
             except Exception as e:
-                st.error(f"Error generating insights: {e}")
-        else:
-            st.write("No relevant content found to compare for compliance.")
+                st.error(f"Error processing PDF: {e}")
 
-# Email Campaign Checking Mode
-elif app_mode == "Email Campaign Checking":
-    st.header("Email Campaign Checker")
+elif tool_choice == "Email Campaign Tool":
+    st.header("AI Powered Email Campaign Tool")
 
-    email_file = st.file_uploader("Upload Marketing Email (.eml)", type="eml")
-    if email_file is not None:
-        parsed_email_content = parse_email_content(email_file)
-        
-        if parsed_email_content is not None:
-            st.write("Email Content:")
-            st.write(parsed_email_content)
-            
-            # Use the same model to evaluate compliance of the email campaign
-            relevant_chunk = find_most_relevant_chunk(parsed_email_content, chunks)
-            
-            if relevant_chunk:
-                model = genai.GenerativeModel('gemini-1.5-flash')
+    user_key = st.text_input("Enter your API key to access the app:", type="password")
+    if user_key != st.secrets["api_keys"].get("key_1"):  # Ensure the API key is correct
+        st.error("Invalid API Key! Access Denied.")
+    else:
+        # Upload CSV file containing emails
+        uploaded_file = st.file_uploader("Upload CSV file (columns: email, first_name)", type="csv")
+        if uploaded_file:
+            df = pd.read_csv(uploaded_file)
+            if 'email' not in df.columns or 'first_name' not in df.columns:
+                st.error("CSV must contain 'email' and 'first_name' columns.")
+            else:
+                email_list = df['email'].tolist()
+                first_name_list = df['first_name'].tolist()
 
-                # Create a combined prompt with the relevant content and email
-                combined_prompt = f"Here is the most relevant content from the compliance document:\n\n{relevant_chunk}\n\nUser's Marketing Campaign Email:\n\n{parsed_email_content}\n\nDoes this email comply with the regulations? Provide insights and specify which clauses are being followed or violated, including suggestions for improvement."
+                subject = st.text_input("Email Subject", "Your Newsletter")
+                body_template = "Hello {first_name},\n\nWe have some exciting news for you. Stay tuned!"
+                email_body = st.text_area("Email Body", body_template)
 
-                try:
-                    response = model.generate_content(combined_prompt)
-                    st.write("Compliance Insights:")
-                    st.write(response.text)
-                    
-                    compliance_score = np.random.randint(60, 100)
-                    pdf_report_path = generate_pdf_report(parsed_email_content, response.text, compliance_score)
-                    with open(pdf_report_path, "rb") as f:
-                        st.download_button(
-                            label="Download Email Compliance Report (PDF)",
-                            data=f,
-                            file_name="email_compliance_report.pdf",
-                            mime="application/pdf"
-                        )
+                # Translate email content if needed
+                language_options = ["en", "es", "fr", "de", "it", "pt", "ru"]
+                selected_language = st.selectbox("Select Email Language", language_options)
 
-                except Exception as e:
-                    st.error(f"Error generating insights: {e}")
+                if selected_language != "en":
+                    translated_body = asyncio.run(translate_text(email_body, selected_language))
+                    st.session_state.translated_body = translated_body
+
+                # Preview email
+                preview_email = st.checkbox("Preview Email with First Record")
+                if preview_email and len(email_list) > 0:
+                    preview_text = st.session_state.translated_body if 'translated_body' in st.session_state else email_body
+                    preview_text = preview_text.format(first_name=first_name_list[0])
+                    st.write("Preview:")
+                    st.write(preview_text)
+
+                # Send emails
+                if st.checkbox("Confirm and Send Campaign"):
+                    api_key = st.secrets["MAILGUN_API_KEY"]
+                    success_count = 0
+                    failure_count = 0
+                    for email, first_name in zip(email_list, first_name_list):
+                        personalized_body = st.session_state.translated_body if 'translated_body' in st.session_state else email_body
+                        personalized_body = personalized_body.format(first_name=first_name)
+                        if send_email(email, subject, personalized_body, api_key):
+                            success_count += 1
+                        else:
+                            failure_count += 1
+
+                    st.success(f"Emails sent successfully: {success_count}")
+                    if failure_count > 0:
+                        st.warning(f"Emails failed to send: {failure_count}")
