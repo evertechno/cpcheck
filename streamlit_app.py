@@ -137,7 +137,7 @@ def generate_text_report(content, insights, compliance_score):
     return file_path
 
 # Streamlit App UI
-st.title("Mutual Fund Marketing Campaign Compliance Checker")
+st.title("Marketing Campaign Compliance & Email Checker")
 
 # Path to the pre-existing Compliance PDF Document
 PDF_FILE_PATH = "compliance_document.pdf"  # Replace with the correct path to your compliance document
@@ -149,69 +149,115 @@ if pdf_content is None:
 # Split the content into smaller chunks for semantic search
 chunks = split_text_into_chunks(pdf_content)
 
-# Upload HTML or Email Content
-file_type = st.radio("Choose the file type", ('HTML Email', 'Text Email (.eml)'))
+# Choose function (Compliance Checking or Email Campaign Checking)
+app_mode = st.radio("Select Tool Mode", ("Compliance Checking", "Email Campaign Checking"))
 
-# Initialize parsed_html to None
-parsed_html = None
+# Compliance Checking Mode
+if app_mode == "Compliance Checking":
+    st.header("Compliance Checking Tool")
 
-if file_type == 'HTML Email':
-    html_file = st.file_uploader("Upload HTML Email/Creative", type="html")
-    if html_file is not None:
-        html_content = html_file.read().decode("utf-8")
-        parsed_html = parse_html_content(html_content)
-        
-        if parsed_html is None:
-            st.stop()  # Stop execution if HTML parsing failed
-else:
-    email_file = st.file_uploader("Upload Email (.eml)", type="eml")
-    if email_file is not None:
-        parsed_html = parse_email_content(email_file)
-        
-        if parsed_html is None:
-            st.stop()  # Stop execution if email parsing failed
+    # Upload HTML or Email Content for compliance check
+    file_type = st.radio("Choose the file type", ('HTML Email', 'Text Email (.eml)'))
 
-# Check compliance for the uploaded content
-if parsed_html:
-    relevant_chunk = find_most_relevant_chunk(parsed_html, chunks)
-    
-    if relevant_chunk:
-        # Load and configure the Generative AI Model
-        model = genai.GenerativeModel('gemini-1.5-flash')
+    # Initialize parsed_html to None
+    parsed_html = None
 
-        # Create a combined prompt with the relevant content and HTML creative
-        combined_prompt = f"Here is the most relevant content from the compliance document:\n\n{relevant_chunk}\n\nUser's Marketing Campaign Content:\n\n{parsed_html}\n\nDoes this email/creative comply with the regulations? Provide insights and specify which clauses are being followed or violated, including suggestions for improvement."
-
-        try:
-            # Generate response from the AI model
-            response = model.generate_content(combined_prompt)
-            st.write("Compliance Insights:")
-            st.write(response.text)
+    if file_type == 'HTML Email':
+        html_file = st.file_uploader("Upload HTML Email/Creative", type="html")
+        if html_file is not None:
+            html_content = html_file.read().decode("utf-8")
+            parsed_html = parse_html_content(html_content)
             
-            # Assume a dummy compliance score for this example (could be calculated based on similarity)
-            compliance_score = np.random.randint(60, 100)  # Random score for example purposes
-            
-            # Offer downloadable PDF report
-            pdf_report_path = generate_pdf_report(parsed_html, response.text, compliance_score)
-            with open(pdf_report_path, "rb") as f:
-                st.download_button(
-                    label="Download Compliance Report (PDF)",
-                    data=f,
-                    file_name="compliance_report.pdf",
-                    mime="application/pdf"
-                )
-            
-            # Offer downloadable Text report
-            text_report_path = generate_text_report(parsed_html, response.text, compliance_score)
-            with open(text_report_path, "rb") as f:
-                st.download_button(
-                    label="Download Compliance Report (Text)",
-                    data=f,
-                    file_name="compliance_report.txt",
-                    mime="text/plain"
-                )
-
-        except Exception as e:
-            st.error(f"Error generating insights: {e}")
+            if parsed_html is None:
+                st.stop()  # Stop execution if HTML parsing failed
     else:
-        st.write("No relevant content found to compare for compliance.")
+        email_file = st.file_uploader("Upload Email (.eml)", type="eml")
+        if email_file is not None:
+            parsed_html = parse_email_content(email_file)
+            
+            if parsed_html is None:
+                st.stop()  # Stop execution if email parsing failed
+
+    # Check compliance for the uploaded content
+    if parsed_html:
+        relevant_chunk = find_most_relevant_chunk(parsed_html, chunks)
+        
+        if relevant_chunk:
+            # Load and configure the Generative AI Model
+            model = genai.GenerativeModel('gemini-1.5-flash')
+
+            # Create a combined prompt with the relevant content and HTML creative
+            combined_prompt = f"Here is the most relevant content from the compliance document:\n\n{relevant_chunk}\n\nUser's Marketing Campaign Content:\n\n{parsed_html}\n\nDoes this email/creative comply with the regulations? Provide insights and specify which clauses are being followed or violated, including suggestions for improvement."
+
+            try:
+                # Generate response from the AI model
+                response = model.generate_content(combined_prompt)
+                st.write("Compliance Insights:")
+                st.write(response.text)
+                
+                # Assume a dummy compliance score for this example (could be calculated based on similarity)
+                compliance_score = np.random.randint(60, 100)  # Random score for example purposes
+                
+                # Offer downloadable PDF report
+                pdf_report_path = generate_pdf_report(parsed_html, response.text, compliance_score)
+                with open(pdf_report_path, "rb") as f:
+                    st.download_button(
+                        label="Download Compliance Report (PDF)",
+                        data=f,
+                        file_name="compliance_report.pdf",
+                        mime="application/pdf"
+                    )
+                
+                # Offer downloadable Text report
+                text_report_path = generate_text_report(parsed_html, response.text, compliance_score)
+                with open(text_report_path, "rb") as f:
+                    st.download_button(
+                        label="Download Compliance Report (Text)",
+                        data=f,
+                        file_name="compliance_report.txt",
+                        mime="text/plain"
+                    )
+
+            except Exception as e:
+                st.error(f"Error generating insights: {e}")
+        else:
+            st.write("No relevant content found to compare for compliance.")
+
+# Email Campaign Checking Mode
+elif app_mode == "Email Campaign Checking":
+    st.header("Email Campaign Checker")
+
+    email_file = st.file_uploader("Upload Marketing Email (.eml)", type="eml")
+    if email_file is not None:
+        parsed_email_content = parse_email_content(email_file)
+        
+        if parsed_email_content is not None:
+            st.write("Email Content:")
+            st.write(parsed_email_content)
+            
+            # Use the same model to evaluate compliance of the email campaign
+            relevant_chunk = find_most_relevant_chunk(parsed_email_content, chunks)
+            
+            if relevant_chunk:
+                model = genai.GenerativeModel('gemini-1.5-flash')
+
+                # Create a combined prompt with the relevant content and email
+                combined_prompt = f"Here is the most relevant content from the compliance document:\n\n{relevant_chunk}\n\nUser's Marketing Campaign Email:\n\n{parsed_email_content}\n\nDoes this email comply with the regulations? Provide insights and specify which clauses are being followed or violated, including suggestions for improvement."
+
+                try:
+                    response = model.generate_content(combined_prompt)
+                    st.write("Compliance Insights:")
+                    st.write(response.text)
+                    
+                    compliance_score = np.random.randint(60, 100)
+                    pdf_report_path = generate_pdf_report(parsed_email_content, response.text, compliance_score)
+                    with open(pdf_report_path, "rb") as f:
+                        st.download_button(
+                            label="Download Email Compliance Report (PDF)",
+                            data=f,
+                            file_name="email_compliance_report.pdf",
+                            mime="application/pdf"
+                        )
+
+                except Exception as e:
+                    st.error(f"Error generating insights: {e}")
