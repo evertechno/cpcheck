@@ -1,5 +1,4 @@
 import streamlit as st
-import google.generativeai as genai
 import pandas as pd
 import requests
 import asyncio
@@ -8,40 +7,50 @@ from io import BytesIO
 from googletrans import Translator
 from fpdf import FPDF
 import os
+import re
 
 # Configure the API key securely from Streamlit's secrets
 genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
 
-# AMFI PDF URL
-AMFI_PDF_URL = "https://raw.githubusercontent.com/sobarine21/mailgunner/c4d88013cf2a4fd4092001e283398c6cd629c8d7/AMFI.pdf"
-
 # Helper Functions
-def extract_amfi_guidelines_from_github(pdf_url):
-    """Extract AMFI guidelines from a PDF hosted on GitHub."""
+def extract_amfi_guidelines_from_local_pdf(pdf_path):
+    """Extract AMFI guidelines from a local PDF."""
     try:
-        response = requests.get(pdf_url)
-        response.raise_for_status()
-        pdf_file = BytesIO(response.content)
-        pdf_reader = PyPDF2.PdfReader(pdf_file)
-        text = ""
-        for page_num in range(len(pdf_reader.pages)):
-            page = pdf_reader.pages[page_num]
-            text += page.extract_text()
-        return text
+        with open(pdf_path, "rb") as file:
+            pdf_reader = PyPDF2.PdfReader(file)
+            text = ""
+            for page_num in range(len(pdf_reader.pages)):
+                page = pdf_reader.pages[page_num]
+                text += page.extract_text()
+            return text
     except Exception as e:
         st.error(f"Error extracting text from PDF: {e}")
         return ""
 
-def check_compliance(test_email, amfi_guidelines):
-    """Check if the email complies with the AMFI advertisement code of conduct."""
+def dynamic_compliance_check(test_email, amfi_guidelines):
+    """Dynamically check the email for compliance based on AMFI guidelines."""
     violations = []
-    if "mutual fund" not in test_email.lower():
-        violations.append("The email must mention 'mutual fund'.")
-    if "disclaimer" not in test_email.lower():
-        violations.append("The email should include a disclaimer regarding mutual fund investments.")
-    if not any(keyword in test_email.lower() for keyword in ["risk", "past performance", "no guarantee"]):
-        violations.append("The email should mention risk and past performance disclaimers.")
-    
+
+    # Define patterns for common violations
+    required_keywords = ["mutual fund", "disclaimer", "risk", "past performance", "no guarantee"]
+    guideline_keywords = re.findall(r'\b(?:' + '|'.join(required_keywords) + r')\b', amfi_guidelines.lower())
+
+    # Check if essential terms are mentioned in the email
+    if not any(keyword in test_email.lower() for keyword in required_keywords):
+        violations.append("The email must mention key terms like 'mutual fund', 'disclaimer', 'risk', or 'past performance'.")
+
+    # Ensure risk, disclaimer, and past performance terms are mentioned
+    if not any(term in test_email.lower() for term in ["risk", "past performance", "no guarantee"]):
+        violations.append("The email should include a disclaimer regarding the risks involved and past performance of the mutual fund.")
+
+    # Check if the disclaimer is generic enough or violates specific AMFI rules
+    if re.search(r"(guarantee|promise|assurance)", test_email.lower()):
+        violations.append("The email should not include any guarantees or promises regarding returns.")
+
+    # Additional checks: Look for references to funds, financial advice, etc.
+    if re.search(r"(investment|advice|returns|profits)", test_email.lower()):
+        violations.append("The email should clarify that it does not provide financial advice or guaranteed returns.")
+
     if violations:
         return False, violations
     return True, ["The email complies with the code of conduct."]
@@ -81,7 +90,6 @@ def generate_text_report(content, insights, compliance_score):
         f.write(report)
     return file_path
 
-# Email Campaign Tool
 def send_email(email, subject, body, api_key):
     """Function to send email using Mailgun API"""
     headers = {
@@ -94,8 +102,13 @@ def send_email(email, subject, body, api_key):
         "subject": subject,
         "text": body
     }
-    response = requests.post("https://api.mailgun.net/v3/yourdomain.com/messages", headers=headers, data=data)
-    return response.status_code == 200
+    try:
+        response = requests.post("https://api.mailgun.net/v3/yourdomain.com/messages", headers=headers, data=data)
+        response.raise_for_status()
+        return response.status_code == 200
+    except requests.exceptions.RequestException as e:
+        st.error(f"Error sending email: {e}")
+        return False
 
 async def translate_text(text, target_language):
     """Translate the email content to the target language."""
@@ -112,8 +125,9 @@ tool_choice = st.radio("Choose a tool:", ["Compliance Checker", "Email Campaign 
 if tool_choice == "Compliance Checker":
     st.header("Mutual Fund Marketing Campaign Compliance Checker")
     
-    # Load AMFI Guidelines
-    amfi_guidelines = extract_amfi_guidelines_from_github(AMFI_PDF_URL)
+    # Load AMFI Guidelines from local PDF
+    AMFI_PDF_PATH = "AMFI.pdf"  # Assuming the PDF is in the same directory as your app code
+    amfi_guidelines = extract_amfi_guidelines_from_local_pdf(AMFI_PDF_PATH)
     
     if amfi_guidelines:
         st.text_area("AMFI Advertisement Code Guidelines", amfi_guidelines, height=300)
@@ -125,7 +139,7 @@ if tool_choice == "Compliance Checker":
         test_email_message = st.text_area("Enter your test email message", height=300)
         if st.button("Check Compliance"):
             if test_email_message:
-                is_compliant, feedback = check_compliance(test_email_message, amfi_guidelines)
+                is_compliant, feedback = dynamic_compliance_check(test_email_message, amfi_guidelines)
                 if is_compliant:
                     st.success("The email complies with the AMFI Code of Conduct.")
                 else:
@@ -137,7 +151,7 @@ if tool_choice == "Compliance Checker":
         html_file = st.file_uploader("Upload HTML Email", type="html")
         if html_file is not None:
             html_content = html_file.read().decode("utf-8")
-            is_compliant, feedback = check_compliance(html_content, amfi_guidelines)
+            is_compliant, feedback = dynamic_compliance_check(html_content, amfi_guidelines)
             if is_compliant:
                 st.success("The HTML email complies with the AMFI Code of Conduct.")
             else:
@@ -154,7 +168,7 @@ if tool_choice == "Compliance Checker":
                 for page_num in range(len(reader.pages)):
                     page = reader.pages[page_num]
                     pdf_text += page.extract_text()
-                is_compliant, feedback = check_compliance(pdf_text, amfi_guidelines)
+                is_compliant, feedback = dynamic_compliance_check(pdf_text, amfi_guidelines)
                 if is_compliant:
                     st.success("The PDF complies with the AMFI Code of Conduct.")
                 else:
