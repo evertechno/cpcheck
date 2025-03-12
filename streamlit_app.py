@@ -1,6 +1,7 @@
 import streamlit as st
 import google.generativeai as genai
 import PyPDF2
+from bs4 import BeautifulSoup
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
@@ -25,9 +26,19 @@ def extract_text_from_pdf(file_path):
         st.error(f"Error processing PDF: {e}")
         return None
 
+# HTML Parsing function
+def parse_html_content(html_content):
+    try:
+        soup = BeautifulSoup(html_content, "html.parser")
+        # Extract text from the HTML content
+        text = soup.get_text(separator="\n", strip=True)
+        return text
+    except Exception as e:
+        st.error(f"Error parsing HTML: {e}")
+        return None
+
 # Function to split the document into chunks based on paragraphs or headings
 def split_text_into_chunks(text, chunk_size=1000):
-    # Split the document by paragraphs or other logical delimiters
     paragraphs = text.split("\n")
     chunks = []
     current_chunk = ""
@@ -51,24 +62,23 @@ def get_text_embeddings(text_list):
 
 # Function to search for the most relevant text chunk
 def find_most_relevant_chunk(query, chunks):
-    # Get embeddings for the chunks and the query
     chunk_embeddings = get_text_embeddings(chunks)
     query_embeddings = get_text_embeddings([query])
+
+    # Reshape the query embeddings to match the dimensions of the chunk embeddings
+    query_embeddings = query_embeddings.reshape(1, -1)  # Ensure it's a 2D array (1, n_features)
     
-    # Calculate cosine similarity between the query and document chunks
     similarities = cosine_similarity(query_embeddings, chunk_embeddings)
     
-    # Get the index of the most relevant chunk
     best_chunk_idx = np.argmax(similarities)
     
-    # Return the most relevant chunk of text
     return chunks[best_chunk_idx]
 
 # Streamlit App UI
-st.title("Compliance Document Chatbot (Gemini 1.5 Flash)")
+st.title("Mutual Fund Marketing Campaign Compliance Checker")
 
-# Load PDF content (replace with your PDF file path)
-PDF_FILE_PATH = "compliance_document.pdf"  # Replace with your PDF path
+# Path to the pre-existing Compliance PDF Document
+PDF_FILE_PATH = "compliance_document.pdf"  # Replace with the correct path to your compliance document
 pdf_content = extract_text_from_pdf(PDF_FILE_PATH)
 
 if pdf_content is None:
@@ -77,32 +87,31 @@ if pdf_content is None:
 # Split the content into smaller chunks for semantic search
 chunks = split_text_into_chunks(pdf_content)
 
-# Prompt input field
-prompt = st.text_input("Ask a question about the compliance document:", "")
+# Upload HTML Content (Email or Creative)
+html_file = st.file_uploader("Upload HTML Email/Creative", type="html")
+if html_file is not None:
+    html_content = html_file.read().decode("utf-8")
+    parsed_html = parse_html_content(html_content)
+    
+    if parsed_html is None:
+        st.stop()  # Stop execution if HTML parsing failed
+    
+    # Check compliance for the uploaded HTML content
+    relevant_chunk = find_most_relevant_chunk(parsed_html, chunks)
+    
+    if relevant_chunk:
+        # Load and configure the Generative AI Model
+        model = genai.GenerativeModel('gemini-1.5-flash')
 
-# Button to generate response
-if st.button("Generate Response"):
-    if prompt:
+        # Create a combined prompt with the relevant content and HTML creative
+        combined_prompt = f"Here is the most relevant content from the compliance document:\n\n{relevant_chunk}\n\nUser's Marketing Campaign Content:\n\n{parsed_html}\n\nDoes this email/creative comply with the regulations? Provide insights."
+
         try:
-            # Find the most relevant chunk based on the user's query
-            relevant_chunk = find_most_relevant_chunk(prompt, chunks)
-            
-            if not relevant_chunk:
-                st.write("No relevant content found for your question.")
-            else:
-                # Load and configure the model
-                model = genai.GenerativeModel('gemini-1.5-flash')
-
-                # Create a combined prompt with the relevant content and user question
-                combined_prompt = f"Here is the most relevant content from the compliance document:\n\n{relevant_chunk}\n\nUser Question: {prompt}\n\nAnswer the user's question based on the relevant content."
-
-                # Generate response from the model
-                response = model.generate_content(combined_prompt)
-
-                # Display response in Streamlit
-                st.write("Response:")
-                st.write(response.text)
+            # Generate response from the AI model
+            response = model.generate_content(combined_prompt)
+            st.write("Compliance Insights:")
+            st.write(response.text)
         except Exception as e:
-            st.error(f"Error: {e}")
+            st.error(f"Error generating insights: {e}")
     else:
-        st.warning("Please enter a prompt.")
+        st.write("No relevant content found to compare for compliance.")
