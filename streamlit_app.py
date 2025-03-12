@@ -2,14 +2,11 @@ import streamlit as st
 import google.generativeai as genai
 import PyPDF2
 import numpy as np
+from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
-from sentence_transformers import SentenceTransformer
 
 # Configure the API key securely from Streamlit's secrets
 genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
-
-# Initialize SentenceTransformer model for embeddings
-model = SentenceTransformer('all-MiniLM-L6-v2')  # A lightweight transformer model
 
 # PDF Loading function
 def extract_text_from_pdf(file_path):
@@ -46,20 +43,20 @@ def split_text_into_chunks(text, chunk_size=1000):
         chunks.append(current_chunk)
     return chunks
 
-# Function to get text embeddings
+# Function to get text embeddings using TF-IDF
 def get_text_embeddings(text_list):
-    return model.encode(text_list)
+    vectorizer = TfidfVectorizer()
+    embeddings = vectorizer.fit_transform(text_list)
+    return embeddings
 
 # Function to search for the most relevant text chunk
 def find_most_relevant_chunk(query, chunks):
-    # Get the embedding of the user's query
-    query_embedding = model.encode([query])[0]
-    
-    # Get embeddings of the document chunks
+    # Get embeddings for the chunks and the query
     chunk_embeddings = get_text_embeddings(chunks)
+    query_embeddings = get_text_embeddings([query])
     
-    # Calculate cosine similarity between query and document chunks
-    similarities = cosine_similarity([query_embedding], chunk_embeddings)
+    # Calculate cosine similarity between the query and document chunks
+    similarities = cosine_similarity(query_embeddings, chunk_embeddings)
     
     # Get the index of the most relevant chunk
     best_chunk_idx = np.argmax(similarities)
