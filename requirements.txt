@@ -1,4 +1,4 @@
 streamlit
 google-generativeai 
 PyPDF2
-sklearn-python
+scikit-learn
