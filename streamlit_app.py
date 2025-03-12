@@ -110,6 +110,9 @@ chunks = split_text_into_chunks(pdf_content)
 # Upload HTML or Email Content
 file_type = st.radio("Choose the file type", ('HTML Email', 'Text Email (.eml)'))
 
+# Initialize parsed_html to None
+parsed_html = None
+
 if file_type == 'HTML Email':
     html_file = st.file_uploader("Upload HTML Email/Creative", type="html")
     if html_file is not None:
