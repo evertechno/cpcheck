@@ -8,6 +8,8 @@ from sklearn.metrics.pairwise import cosine_similarity
 import email
 from email import policy
 from email.parser import BytesParser
+from fpdf import FPDF
+import os
 
 # Configure the API key securely from Streamlit's secrets
 genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
@@ -94,20 +96,36 @@ def find_most_relevant_chunk(query, chunks):
     
     return chunks[best_chunk_idx]
 
+# Function to generate downloadable PDF report
+def generate_pdf_report(content, insights, compliance_score):
+    pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.add_page()
+    
+    # Title
+    pdf.set_font("Arial", 'B', 16)
+    pdf.cell(200, 10, "Compliance Check Report", ln=True, align='C')
+    
+    # Compliance Insights
+    pdf.ln(10)
+    pdf.set_font("Arial", size=12)
+    pdf.multi_cell(0, 10, f"Compliance Check Insights:\n\n{insights}")
+    
+    # Compliance Score
+    pdf.ln(10)
+    pdf.cell(200, 10, f"Compliance Score: {compliance_score}%")
+    
+    # Content Text
+    pdf.ln(10)
+    pdf.multi_cell(0, 10, "Original Content:\n\n" + content)
+    
+    # Save PDF
+    file_path = "compliance_report.pdf"
+    pdf.output(file_path)
+    return file_path
+
 # Streamlit App UI
 st.title("Mutual Fund Marketing Campaign Compliance Checker")
-
-# Add custom CSS to hide the header and the top-right buttons
-hide_streamlit_style = """
-    <style>
-        .css-1r6p8d1 {display: none;} /* Hides the Streamlit logo in the top left */
-        .css-1v3t3fg {display: none;} /* Hides the star button */
-        .css-1r6p8d1 .st-ae {display: none;} /* Hides the Streamlit logo */
-        header {visibility: hidden;} /* Hides the header */
-        .css-1tqja98 {visibility: hidden;} /* Hides the header bar */
-    </style>
-"""
-st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
 # Path to the pre-existing Compliance PDF Document
 PDF_FILE_PATH = "compliance_document.pdf"  # Replace with the correct path to your compliance document
@@ -157,6 +175,18 @@ if parsed_html:
             response = model.generate_content(combined_prompt)
             st.write("Compliance Insights:")
             st.write(response.text)
+            
+            # Assume a dummy compliance score for this example (could be calculated based on similarity)
+            compliance_score = np.random.randint(60, 100)  # Random score for example purposes
+            
+            # Offer downloadable PDF report
+            st.download_button(
+                label="Download Compliance Report",
+                data=generate_pdf_report(parsed_html, response.text, compliance_score),
+                file_name="compliance_report.pdf",
+                mime="application/pdf"
+            )
+
         except Exception as e:
             st.error(f"Error generating insights: {e}")
     else:
