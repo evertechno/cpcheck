@@ -4,3 +4,4 @@ PyPDF2
 scikit-learn
 bs4
 fpdf
+googletrans
